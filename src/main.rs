@@ -92,6 +92,15 @@ impl Tokens {
         self.index = -1;
     }
 
+    fn bof(&self) -> bool {
+        return self.index <= 0;
+    }
+
+    fn eof(&self) -> bool {
+        return (self.index as usize) >= self.items.len() - 1;
+    }
+
+
     fn move_next(&mut self) -> bool {
         if (self.index as usize) >= self.items.len() - 1 {
             false
@@ -101,12 +110,22 @@ impl Tokens {
         }
     }
 
-    fn current(&self) -> Option<Token> {
+    fn current(&self) -> Result<Token,bool> {
         if self.index == -1 || self.index as usize >= self.items.len() {
-            None
+            Err(false)
         } else {
-            Some(self.items[self.index as usize].clone())
+            Ok(self.items[self.index as usize].clone())
         }
+    }
+
+    fn previous(&self) -> Option<Token> {
+        if self.index < 1 { return None };
+        return Some(self.items[self.index as usize - 1].clone());
+    }
+
+    fn next(&self) -> Option<Token> {
+       if self.eof() { return None };
+        return Some(self.items[self.index as usize + 1].clone());
     }
 }
 
@@ -126,9 +145,9 @@ impl TokenStack {
     }
 
     // JS POP has name, should not be required since value is required
-    fn pop(&mut self) -> Token {
+    fn pop(&mut self, name: Option<String>) -> Token {
         let token = self.items.pop_back().unwrap();
-        Token::new(token.token_value, token.token_type, Some(TokenSubType::Stop))
+        Token::new(name.unwrap_or_default(), token.token_type, Some(TokenSubType::Stop))
     }
 
     fn token(&self) -> Option<&Token> {
@@ -147,13 +166,6 @@ impl TokenStack {
         self.token().map(|t| t.token_subtype.clone()).unwrap_or_default()
     }
 }
-
-// Function to create a new Token with a default subtype
-// TODO :: redudant
-fn create_token(value: String, token_type: TokenType, token_subtype: Option<TokenSubType>) -> Token {
-    Token::new(value, token_type, token_subtype)
-}
-
 
 fn current_char(formula: &str, offset: usize) -> char {
     formula.chars().nth(offset).unwrap_or('\0')
@@ -230,7 +242,7 @@ lazy_static! {
 // TODO: refactor current_char(formula, offset)
 fn tokenize(mut formula: &str) -> Tokens {
 
-    // trim string
+    // trim string, remove =
     while formula.len() > 0 {
         if formula.starts_with(" ") {
             formula = &formula[1..];
@@ -332,6 +344,7 @@ fn tokenize(mut formula: &str) -> Tokens {
             else {
                 inNumeric = false;
                 tokens.add(token.to_string(), TokenType::Operand, Some(TokenSubType::Number));
+                token = String::new();
             }
         }
 
@@ -428,7 +441,7 @@ fn tokenize(mut formula: &str) -> Tokens {
         if current_char(formula, offset) == ';' {
             check_and_add_token(&mut token, TokenType::Operand, &mut tokens);
 
-            tokens.add_ref(token_stack.pop());
+            tokens.add_ref(token_stack.pop(Some("ARRAYROW".to_string())));
 
             if token_stack.token_type() == TokenType::Function {
                 tokens.add(";".to_string(), TokenType::Argument, None);
@@ -443,8 +456,8 @@ fn tokenize(mut formula: &str) -> Tokens {
         if current_char(formula, offset) == '}' {
             check_and_add_token(&mut token, TokenType::Operand, &mut tokens);
 
-            tokens.add_ref(token_stack.pop());
-            tokens.add_ref(token_stack.pop());
+            tokens.add_ref(token_stack.pop(Some("ARRAYROW".to_string())));
+            tokens.add_ref(token_stack.pop(Some("ARRAY".to_string())));
             offset += 1;
             continue;
         }
@@ -506,7 +519,7 @@ fn tokenize(mut formula: &str) -> Tokens {
         if current_char(formula, offset) == ')' {
             let _ = check_and_add_token(&mut token, TokenType::Operand, &mut tokens);
 
-            tokens.add_ref(token_stack.pop());
+            tokens.add_ref(token_stack.pop(None));
             offset += 1;
             continue;
         }
@@ -515,14 +528,55 @@ fn tokenize(mut formula: &str) -> Tokens {
         offset += 1;
 
     } // EOF
-
+    println!("lasttoken: {:?}", token);
     // dump last token
     let _ = check_and_add_token(&mut token, TokenType::Operand, &mut tokens);
 
-    return tokens;
-    
+    // return tokens;
+
+    // let mut tokens2 = Tokens::new();
+
+    // while tokens.move_next() {
+    //     match tokens.current() {
+    //         Ok(token) => {
+    //            if token.token_type == TokenType::WhiteSpace {
+    //                 if tokens.eof() || tokens.bof() {
+    //                     // no-op
+    //                 }
+    //                 else if !(
+    //                         tokens.previous().unwrap().token_type == TokenType::Function && tokens.previous().unwrap().token_subtype == Some(TokenSubType::Stop) || 
+    //                         tokens.previous().unwrap().token_type == TokenType::Subexpression && tokens.previous().unwrap().token_subtype == Some(TokenSubType::Stop) ||
+    //                         tokens.previous().unwrap().token_type == TokenType::Operand) {
+    //                         // no-op
+    //                 }
+    //                 else if !(
+    //                         tokens.next().unwrap().token_type == TokenType::Function && tokens.next().unwrap().token_subtype == Some(TokenSubType::Start) || 
+    //                         tokens.next().unwrap().token_type == TokenType::Subexpression && tokens.next().unwrap().token_subtype == Some(TokenSubType::Start) ||
+    //                         tokens.next().unwrap().token_type == TokenType::Operand) {
+    //                         // no-op
+    //                 }
+    //                 else {
+    //                     tokens2.add(token.token_value.clone(), TokenType::OperatorInfix, Some(TokenSubType::Intersect));
+    //                 }
+    //                continue;
+    //            }
+    //         }
+    //         Err(_) => {
+    //             continue;
+    //         }
+    //     }
+
+
+    // }
+
+    return tokens;  
 }
 
 fn main() {
     println!("Hello, world!");
+    let tokens = tokenize("SUM(1,2,3)");
+    for token in tokens.items {
+        println!("{:?}", token);
+    }
+    
 }
