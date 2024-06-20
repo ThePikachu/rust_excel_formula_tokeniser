@@ -107,21 +107,13 @@ impl Tokens {
         true
     }
 
-    fn current(&self) -> Option<Token> {
+    fn current(&mut self) -> Option<&mut Token> {
         if self.index == -1 || self.index as usize >= self.items.len() {
             None
         } else {
-            Some(self.items[self.index as usize].clone())
+            Some(&mut self.items[self.index as usize])
         }
     }
-
-    // fn current(&self) -> Result<Token,bool> {
-    //     if self.index == -1 || self.index as usize >= self.items.len() {
-    //         Err(false)
-    //     } else {
-    //         Ok(self.items[self.index as usize].clone())
-    //     }
-    // }
 
     fn previous(&self) -> Option<Token> {
         if self.index < 1 { return None };
@@ -186,7 +178,7 @@ fn double_char(formula: &str, offset: usize) -> &str {
 }
 
 fn next_char(formula: &str, offset: usize) -> char {
-    formula.chars().nth(offset + 1).unwrap_or('\0')
+    formula.chars().nth(offset + 1).unwrap()
 }
 
 fn eof(formula: &str, offset: usize) -> bool {
@@ -285,6 +277,7 @@ fn tokenize(mut formula: &str) -> Tokens {
                 else {
                     inString = false;
                     tokens.add(token.to_string(), TokenType::Operand, Some(TokenSubType::Text));
+                    token = String::new();
                 }
             }
             else {
@@ -375,6 +368,7 @@ fn tokenize(mut formula: &str) -> Tokens {
            }
         }
 
+        // handle horizontal separator
         // TODO:: add support for locale specific horizontal separators US = ',' EU = '.'
         if current_char(formula, offset) == ',' {
             check_and_add_token(&mut token, TokenType::Operand, &mut tokens);
@@ -390,6 +384,8 @@ fn tokenize(mut formula: &str) -> Tokens {
            continue;
         }
 
+
+
         if current_char(formula,offset).is_ascii_digit() && (token.is_empty() || 
         is_previous_non_digit_blank(formula, offset)  && !is_next_non_digit_the_range_operator(formula, offset)) {
             inNumeric = true;
@@ -399,7 +395,7 @@ fn tokenize(mut formula: &str) -> Tokens {
         }
 
         if current_char(formula, offset) == '"' {
-            check_and_add_token(&mut token, TokenType::Unknown, &mut tokens);
+            let _ = check_and_add_token(&mut token, TokenType::Unknown, &mut tokens);
 
             inString = true;
             offset += 1;
@@ -407,8 +403,7 @@ fn tokenize(mut formula: &str) -> Tokens {
         }
 
         if current_char(formula, offset) == '\'' {
-            check_and_add_token(&mut token, TokenType::Unknown, &mut tokens);
-
+            let _ = check_and_add_token(&mut token, TokenType::Unknown, &mut tokens);
             token = "'".to_string();
             inPath = true;
             offset += 1;
@@ -432,7 +427,6 @@ fn tokenize(mut formula: &str) -> Tokens {
         }
 
         // handle array
-
         if current_char(formula, offset) == '{' {
             check_and_add_token(&mut token, TokenType::Unknown, &mut tokens);
 
@@ -480,7 +474,6 @@ fn tokenize(mut formula: &str) -> Tokens {
         }
 
         // multi character comparators
-
         if ["<>", "<=", ">="].contains(&double_char(formula, offset)) {
             check_and_add_token(&mut token, TokenType::Operand, &mut tokens);
 
@@ -539,7 +532,7 @@ fn tokenize(mut formula: &str) -> Tokens {
 
     // IMPORTANT NOTE: 
     // THIS SECTION ONWARDS IS NOT IMPORTANT IF YOU ARE ONLY INTERESTED IN GENERAL TOKENIZATION OF TYPES (FUNCTIONS, OPERANDS, OPERATORS, ETC.)
-    // THIS SECTION ONWARD MAKES THE TYPE AND SUBTYPE MORE SPECIFIC FOR SOME TYPES (not relevant to functions)
+    // THIS SECTION ONWARD MAKES THE TYPE AND SUBTYPE MORE SPECIFIC FOR SOME TYPES AND REMOVES WHITESPACE (not relevant to functions)
     // SIMPLY RETURN TOKENS IF THIS IS NOT UNNECESSARY
     // return tokens;
 
@@ -547,30 +540,73 @@ fn tokenize(mut formula: &str) -> Tokens {
 
     // remove white space tokens
     while tokens.move_next() {
-        let token = tokens.current().unwrap();
-        if token.token_type == TokenType::WhiteSpace {
-            if tokens.eof() || tokens.bof() {
-                // no-op
-            }
-            else if !(
-                    tokens.previous().unwrap().token_type == TokenType::Function && tokens.previous().unwrap().token_subtype == Some(TokenSubType::Stop) || 
-                    tokens.previous().unwrap().token_type == TokenType::Subexpression && tokens.previous().unwrap().token_subtype == Some(TokenSubType::Stop) ||
-                    tokens.previous().unwrap().token_type == TokenType::Operand) {
+        let at_eof = tokens.eof();
+        let at_bof = tokens.bof();
+        let previous_token = tokens.previous();
+        let next_token = tokens.next();
+        
+        if let Some(token) = tokens.current() {
+            if token.token_type == TokenType::WhiteSpace {
+                if at_bof || at_eof {
                     // no-op
-            }
-            else if !(
-                    tokens.next().unwrap().token_type == TokenType::Function && tokens.next().unwrap().token_subtype == Some(TokenSubType::Start) || 
-                    tokens.next().unwrap().token_type == TokenType::Subexpression && tokens.next().unwrap().token_subtype == Some(TokenSubType::Start) ||
-                    tokens.next().unwrap().token_type == TokenType::Operand) {
-                    // no-op
-            }
-            else {
-                tokens2.add(token.token_value.clone(), TokenType::OperatorInfix, Some(TokenSubType::Intersect));
-            }
-           continue;
-       }
+                }
+                else {
+                    let prev_valid = if let Some(prev_token) = previous_token {
+                        matches!(
+                            prev_token,
+                            Token {
+                                token_type: TokenType::Function,
+                                token_subtype: Some(TokenSubType::Stop),
+                                ..
+                            }
+                            | Token {
+                                token_type: TokenType::Subexpression,
+                                token_subtype: Some(TokenSubType::Stop),
+                                ..
+                            }
+                            | Token {
+                                token_type: TokenType::Operand,
+                                ..
+                            }
+                        )
+                    } else {
+                        false
+                    };
 
-       tokens2.add_ref(token.clone());
+                    let next_valid = if let Some(next_token) = next_token {
+                        matches!(
+                            next_token,
+                            Token {
+                                token_type: TokenType::Function,
+                                token_subtype: Some(TokenSubType::Start),
+                                ..
+                            }
+                            | Token {
+                                token_type: TokenType::Subexpression,
+                                token_subtype: Some(TokenSubType::Start),
+                                ..
+                            }
+                            | Token {
+                                token_type: TokenType::Operand,
+                                ..
+                            }
+                        )
+                    } else {
+                        false
+                    };
+
+                    if prev_valid && next_valid {
+                        tokens2.add(
+                            token.token_value.clone(),
+                            TokenType::OperatorInfix,
+                            Some(TokenSubType::Intersect),
+                        );
+                    }
+                }
+                continue;
+        }
+        tokens2.add_ref(token.clone());
+        }
     } // white space removal end
 
     // switch infix "-" operator to prefix
@@ -578,100 +614,116 @@ fn tokenize(mut formula: &str) -> Tokens {
     // identify operand and infix-operator subtypes
     // pull "@" from in front of function names
     while (tokens2.move_next()) {
-        let mut token = tokens2.current().unwrap();
+        let at_bof = tokens2.bof();
+        let prev_token_type_and_subtype = tokens2.previous().map(|prev| (prev.token_type.clone(), prev.token_subtype.clone()));
+        
+        if let Some(token) = tokens2.current() {
+            if token.token_type == TokenType::OperatorInfix && token.token_value == "-" {
+                if (at_bof) {
+                    token.token_type = TokenType::OperatorPrefix;
+                }
+                else if let Some((prev_type, prev_subtype)) = prev_token_type_and_subtype {
+                    match (prev_type, prev_subtype) {
+                        (TokenType::Function, Some(TokenSubType::Stop)) |
+                        (TokenType::Subexpression, Some(TokenSubType::Stop)) |
+                        (TokenType::OperatorPostfix, _) |
+                        (TokenType::Operand, _) => {
+                            token.token_subtype = Some(TokenSubType::Math);
+                        }
+                        _ => {
+                            token.token_type = TokenType::OperatorPrefix;
+                        }
+                    
+                    }
+                }
+                continue;
+            } // end of infix "-" operator to prefix
 
-        if token.token_type == TokenType::OperatorInfix && token.token_value == "-" {
-            if (tokens2.bof()) {
-                token.token_type = TokenType::OperatorPrefix;
-            }
-            else if let Some(prev_token) = tokens2.previous() {
-                match prev_token {
-                    Token { token_type: TokenType::Function, token_subtype: Some(TokenSubType::Stop), .. } |
-                    Token { token_type: TokenType::Subexpression, token_subtype: Some(TokenSubType::Stop), .. } |
-                    Token { token_type: TokenType::OperatorPostfix, .. } |
-                    Token { token_type: TokenType::Operand, .. } => {
+            if token.token_type == TokenType::OperatorInfix && token.token_value == "+" {
+                if (at_bof) {
+                    token.token_type = TokenType::NoOp;
+                }
+                else if let Some((prev_type, prev_subtype)) = prev_token_type_and_subtype {
+                    match (prev_type, prev_subtype) {
+                        (TokenType::Function, Some(TokenSubType::Stop)) |
+                        (TokenType::Subexpression, Some(TokenSubType::Stop)) |
+                        (TokenType::OperatorPostfix, _) |
+                        (TokenType::Operand, _) => {
+                            token.token_subtype = Some(TokenSubType::Math);
+                        }
+                        _ => {
+                            token.token_type = TokenType::NoOp;
+                        }
+                    }
+                }
+                continue;
+            }  // end of infix "+" operator to noop
+
+            if token.token_type == TokenType::OperatorInfix && token.token_subtype.is_none() {
+                if let Some(first_char) = token.token_value.chars().next() {
+                    if "<>=".contains(first_char) {
+                        token.token_subtype = Some(TokenSubType::Logical);
+                    } else if first_char == '&' {
+                        token.token_subtype = Some(TokenSubType::Concatenate);
+                    } else {
                         token.token_subtype = Some(TokenSubType::Math);
                     }
-                    _ => {
-                        token.token_type = TokenType::OperatorPrefix;
+                }
+                continue;
+            } // end of infix operator subtypes
+
+            // MISSING CODE: convert number operands token_value to use 100,000 (default) or 100.000 based on language (LINE:624-640)
+            if token.token_type == TokenType::Operand && token.token_subtype.is_none() {
+                match token.token_value.parse::<i32>() {
+                    Ok(number) => {
+                        token.token_subtype = Some(TokenSubType::Number);
+                    },
+                    Err(_) => {
+                        if ["TRUE", "FALSE"].contains(&token.token_value.as_str()) {
+                            token.token_subtype = Some(TokenSubType::Logical); 
+                        }
+                        else {
+                            token.token_subtype = Some(TokenSubType::Range);
+                        }
                     }
                 }
-            }
-            continue;
-        } // end of infix "-" operator to prefix
+                continue;
+            } // end of operand subtypes
 
-        if token.token_type == TokenType::OperatorInfix && token.token_value == "+" {
-            if (tokens2.bof()) {
-                token.token_type = TokenType::NoOp;
-            }
-            else if let Some(prev_token) = tokens2.previous() {
-                match prev_token {
-                    Token { token_type: TokenType::Function, token_subtype: Some(TokenSubType::Stop), .. } |
-                    Token { token_type: TokenType::Subexpression, token_subtype: Some(TokenSubType::Stop), .. } |
-                    Token { token_type: TokenType::OperatorPostfix, .. } |
-                    Token { token_type: TokenType::Operand, .. } => {
-                        token.token_subtype = Some(TokenSubType::Math);
-                    }
-                    _ => {
-                        token.token_type = TokenType::NoOp;
+            if token.token_type == TokenType::Function {
+                if let Some(first_char) = token.token_value.chars().next() {
+                    if first_char == '@' {
+                        token.token_value = token.token_value.chars().skip(1).collect();
                     }
                 }
-            }
-            continue;
-        }  // end of infix "+" operator to noop
-
-        if token.token_type == TokenType::OperatorInfix && token.token_subtype.is_none() {
-            if let Some(first_char) = token.token_value.chars().next() {
-                if "<>=".contains(first_char) {
-                    token.token_subtype = Some(TokenSubType::Logical);
-                } else if first_char == '&' {
-                    token.token_subtype = Some(TokenSubType::Concatenate);
-                } else {
-                    token.token_subtype = Some(TokenSubType::Math);
-                }
-            }
-            continue;
-        } // end of infix operator subtypes
-
-        // MISSING CODE: convert number operands token_value to use 100,000 (default) or 100.000 based on language (LINE:624-640)
-        // 3 AM thoughts: my brain cannot process this logic and convert to rust right now, KIV if necessary, but not really important
-
-        if token.token_type == TokenType::Function {
-            if let Some(first_char) = token.token_value.chars().next() {
-                if first_char == '@' {
-                    token.token_value = token.token_value.chars().skip(1).collect();
-                }
-            }
-            continue;
-        } // end of removing @ from function
+                continue;
+            } // end of removing @ from function
+        } 
 
     } // end of tokens2 loop
 
-    
-
-    return tokens;
     // reset tracker index
-    // tokens2.reset(); 
+    tokens2.reset(); 
 
-    // tokens = Tokens::new();
+    tokens = Tokens::new();
 
-    // while tokens2.move_next() {
-    //     if tokens2.current().unwrap().token_type != TokenType::NoOp {
-    //         tokens.add_ref(tokens2.current().unwrap());
-    //         continue;
-    //     }
-    // }
+    while tokens2.move_next() {
+        if tokens2.current().unwrap().token_type != TokenType::NoOp {
+            tokens.add_ref(tokens2.current().unwrap().clone());
+            continue;
+        }
+    }
     
-    // tokens.reset();
+    tokens.reset();
 
-    // return tokens;  
+    return tokens;  
 }
 
 fn main() {
     println!("Hello, world!");
-    let tokens = tokenize("SUM(1,2,3)");
-    // for token in tokens.items {
-    //     println!("{:?}", token);
-    // }
+    let tokens = tokenize("IF(SUM(IF(FOO = BAR, 10, 0), 10 ) = 20 , \"FOO\", \"BAR\")");
+    for token in tokens.items {
+        println!("{:?}", token);
+    }
     
 }
