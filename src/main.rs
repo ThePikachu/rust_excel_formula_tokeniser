@@ -1,170 +1,24 @@
 
-use std::collections::VecDeque;
 use std::str::Chars;
 use regex::Regex;
 use lazy_static::lazy_static;
 
-#[derive(Debug, PartialEq, Clone)]
-enum TokenType {
-    NoOp,
-    Operand,
-    Function,
-    Subexpression,
-    Argument,
-    OperatorPrefix,
-    OperatorInfix,
-    OperatorPostfix,
-    WhiteSpace,
-    Unknown,
+mod enums;
+mod token;
+mod tokens;
+mod token_stack;
+
+use enums::{TokenType, TokenSubType};
+use token::Token;
+use tokens::Tokens;
+use token_stack::TokenStack;
+
+lazy_static! {
+    static ref SCIENTIFIC_REGEX: Regex = Regex::new(r"^[1-9](\.[0-9]+)?E$").unwrap();
+    static ref NEWLINE_MATCHER: Regex = Regex::new(r"\r\n|\r|\n").unwrap();
 }
 
-#[derive(Debug, PartialEq, Clone)]
-enum TokenSubType {
-    Start,
-    Stop,
-    Text,
-    Number,
-    Logical,
-    Error,
-    Range,
-    Math,
-    Concatenate,
-    Intersect,
-    Union,
-}
-
-#[derive(Debug, PartialEq, Clone)]
-enum TokenValue {
-    Array,
-    ArrayRow,
-    True,
-    False,
-    String
-}
-
-// Define a struct to hold the token information
-#[derive(Debug, Clone)]
-struct Token {
-    token_type: TokenType,
-    token_subtype: Option<TokenSubType>,
-    token_value: String,
-}
-
-impl Token {
-    fn new(token_value: String, token_type: TokenType, token_subtype: Option<TokenSubType>, ) -> Token {
-        Token {
-            token_value,
-            token_type,
-            token_subtype,
-        }
-    }
-}
-
-// const TOK_VALUE_TRUE: bool = true;
-// const TOK_VALUE_FALSE: bool = false;
-
-struct Tokens {
-    items: VecDeque<Token>,
-    index: isize,
-}
-
-impl Tokens {
-    fn new() -> Self {
-        Tokens {
-            items: VecDeque::new(),
-            index: -1,
-        }
-    }
-
-    // need to clone?
-    fn add(&mut self, value: String, token_type: TokenType, token_subtype: Option<TokenSubType>) -> Token {
-        let token = Token::new(  value, token_type, token_subtype,);
-        self.items.push_back(token.clone());
-        token
-    }
-
-    // need to clone?
-    fn add_ref(&mut self, token: Token) {
-        self.items.push_back(token.clone());
-    }
-
-    fn reset(&mut self) {
-        self.index = -1;
-    }
-
-    fn bof(&self) -> bool {
-        return self.index <= 0;
-    }
-
-    fn eof(&self) -> bool {
-        return self.index >= self.items.len().saturating_sub(1) as isize;
-    }
-
-
-    fn move_next(&mut self) -> bool {
-        if self.eof() { return false };
-        self.index += 1;
-        true
-    }
-
-    fn current(&mut self) -> Option<&mut Token> {
-        if self.index == -1 || self.index as usize >= self.items.len() {
-            None
-        } else {
-            Some(&mut self.items[self.index as usize])
-        }
-    }
-
-    fn previous(&self) -> Option<Token> {
-        if self.index < 1 { return None };
-        return Some(self.items[self.index as usize - 1].clone());
-    }
-
-    fn next(&self) -> Option<Token> {
-       if self.eof() { return None };
-        return Some(self.items[self.index as usize + 1].clone());
-    }
-}
-
-struct TokenStack {
-    items: VecDeque<Token>,
-}
-
-impl TokenStack {
-    fn new() -> Self {
-        TokenStack {
-            items: VecDeque::new(),
-        }
-    }
-
-    fn push(&mut self, token: Token) {
-        self.items.push_back(token);
-    }
-
-    // JS POP has name, should not be required since value is required
-    fn pop(&mut self, name: Option<String>) -> Token {
-        let token = self.items.pop_back().unwrap();
-        Token::new(name.unwrap_or_default(), token.token_type, Some(TokenSubType::Stop))
-    }
-
-    fn token(&self) -> Option<&Token> {
-        self.items.back()
-    }
-
-    fn value(&self) -> String {
-        self.token().map(|t| t.token_value.to_string()).expect("token stack value should return a string")
-    }
-
-    fn token_type(&self) -> TokenType {
-        self.token().map(|t| t.token_type.clone()).unwrap()
-    }
-
-    fn subtype(&self) -> Option<TokenSubType> {
-        self.token().map(|t| t.token_subtype.clone()).unwrap_or_default()
-    }
-}
-
-fn current_char(formula: &str, offset: usize) -> char {
+fn get_current_char(formula: &str, offset: usize) -> char {
     formula.chars().nth(offset).unwrap_or('\0')
 }
 
@@ -231,12 +85,6 @@ fn is_scientific_notation(token: &str) -> bool {
     SCIENTIFIC_REGEX.is_match(token)
 }
 
-lazy_static! {
-    static ref SCIENTIFIC_REGEX: Regex = Regex::new(r"^[1-9](\.[0-9]+)?E$").unwrap();
-    static ref NEWLINE_MATCHER: Regex = Regex::new(r"\r\n|\r|\n").unwrap();
-}
-
-// TODO: refactor current_char(formula, offset)
 fn tokenize(mut formula: &str) -> Tokens {
 
     // trim string, remove =
@@ -267,9 +115,11 @@ fn tokenize(mut formula: &str) -> Tokens {
 
     while !eof(formula, offset) {
 
+        let current_char = get_current_char(formula, offset);
+
         // handle double quoted strings e.g "FOO"
         if inString {
-            if current_char(formula, offset) == '"' {
+            if current_char == '"' {
                 if next_char(formula, offset) == '"' {
                     token.push('"');
                     offset += 1;
@@ -281,7 +131,7 @@ fn tokenize(mut formula: &str) -> Tokens {
                 }
             }
             else {
-                token.push(current_char(formula, offset))
+                token.push(current_char)
             }
             offset += 1;
             continue;
@@ -289,7 +139,7 @@ fn tokenize(mut formula: &str) -> Tokens {
 
         // handle single quoted strings e.g 'FOO'
         if inPath {
-            if current_char(formula, offset) == '\'' {
+            if current_char == '\'' {
                 if next_char(formula, offset) == '\'' {
                     token.push('\'');
                     offset += 1;
@@ -298,25 +148,25 @@ fn tokenize(mut formula: &str) -> Tokens {
                     token.push('\''); 
                 }
             } else {
-                token.push(current_char(formula, offset));
+                token.push(current_char);
             }
             offset += 1;
             continue;
         }
 
         if inRange {
-            if current_char(formula, offset) == ']' {
+            if current_char == ']' {
                 inRange = false;
             } 
 
-            token.push(current_char(formula, offset));
+            token.push(current_char);
             offset += 1;
             continue;
         }
 
         // handle error values
         if inError {
-            token.push(current_char(formula, offset));
+            token.push(current_char);
             offset += 1;
 
             if ",#NULL!,#DIV/0!,#VALUE!,#REF!,#NAME?,#NUM!,#N/A,".contains(&format!(",{},", token)) {
@@ -329,13 +179,13 @@ fn tokenize(mut formula: &str) -> Tokens {
 
         // handle numbers
         if inNumeric {
-            if current_char(formula, offset).is_ascii_digit() {
-                token.push(current_char(formula, offset));
+            if current_char.is_ascii_digit() {
+                token.push(current_char);
                 offset += 1;
                 continue;
             }
-            else if "+=".contains(current_char(formula, offset)) && is_scientific_notation(&token) {
-                token.push(current_char(formula, offset));
+            else if "+=".contains(current_char) && is_scientific_notation(&token) {
+                token.push(current_char);
                 offset += 1;
                 continue;
             }
@@ -347,17 +197,17 @@ fn tokenize(mut formula: &str) -> Tokens {
         }
 
         // handle scientific notations
-        if "+=".contains(current_char(formula, offset)) {
+        if "+=".contains(current_char) {
             if token.len() > 1 && is_scientific_notation(&token) {
-                token.push(current_char(formula, offset));
+                token.push(current_char);
                 offset += 1;
                 continue;
             }
         }
 
         // handle argument separator 
-        // TODO:: add support for locale specific argument separators US = ',' EU = ';'
-        if current_char(formula, offset) == ',' &&  ["ARRAY", "ARRAYROW"].contains(&token.as_str()) {
+        // TODO:: add support for locale specific argument separators US = ',' EU = ';' if needed
+        if current_char == ',' &&  ["ARRAY", "ARRAYROW"].contains(&token.as_str()) {
            check_and_add_token(&mut token, TokenType::Operand, &mut tokens);
 
            if (token_stack.token_type() == TokenType::Function) {
@@ -368,16 +218,16 @@ fn tokenize(mut formula: &str) -> Tokens {
            }
         }
 
-        // handle horizontal separator
+        // handle horizontal array separator
         // TODO:: add support for locale specific horizontal separators US = ',' EU = '.'
-        if current_char(formula, offset) == ',' {
+        if current_char == ',' {
             check_and_add_token(&mut token, TokenType::Operand, &mut tokens);
 
             if (token_stack.token_type() == TokenType::Function) {
                 tokens.add(",".to_string(), TokenType::Argument, None);
            }
            else {
-            tokens.add(current_char(formula, offset).to_string(), TokenType::OperatorInfix, Some(TokenSubType::Union));
+            tokens.add(current_char.to_string(), TokenType::OperatorInfix, Some(TokenSubType::Union));
            }
 
            offset += 1;
@@ -386,15 +236,15 @@ fn tokenize(mut formula: &str) -> Tokens {
 
 
 
-        if current_char(formula,offset).is_ascii_digit() && (token.is_empty() || 
+        if current_char.is_ascii_digit() && (token.is_empty() || 
         is_previous_non_digit_blank(formula, offset)  && !is_next_non_digit_the_range_operator(formula, offset)) {
             inNumeric = true;
-            token.push(current_char(formula, offset));
+            token.push(current_char);
             offset += 1;
             continue;
         }
 
-        if current_char(formula, offset) == '"' {
+        if current_char == '"' {
             let _ = check_and_add_token(&mut token, TokenType::Unknown, &mut tokens);
 
             inString = true;
@@ -402,7 +252,7 @@ fn tokenize(mut formula: &str) -> Tokens {
             continue;
         }
 
-        if current_char(formula, offset) == '\'' {
+        if current_char == '\'' {
             let _ = check_and_add_token(&mut token, TokenType::Unknown, &mut tokens);
             token = "'".to_string();
             inPath = true;
@@ -410,24 +260,24 @@ fn tokenize(mut formula: &str) -> Tokens {
             continue;
         }
 
-        if current_char(formula, offset) == '[' {
+        if current_char == '[' {
             inRange = true;
-            token.push(current_char(formula, offset));
+            token.push(current_char);
             offset += 1;
             continue;
         }
 
-        if current_char(formula, offset) == '#' {
+        if current_char == '#' {
             check_and_add_token(&mut token, TokenType::Unknown, &mut tokens);
 
             inError = true;
-            token.push(current_char(formula, offset));
+            token.push(current_char);
             offset += 1;
             continue;  
         }
 
-        // handle array
-        if current_char(formula, offset) == '{' {
+        // handle array formula start
+        if current_char == '{' {
             check_and_add_token(&mut token, TokenType::Unknown, &mut tokens);
 
             token_stack.push(tokens.add("ARRAY".to_string(), TokenType::Function, Some(TokenSubType::Start)));
@@ -436,8 +286,8 @@ fn tokenize(mut formula: &str) -> Tokens {
             continue;
         }
 
-        // vertical separator
-        if current_char(formula, offset) == ';' {
+        // vertical array separator
+        if current_char == ';' {
             check_and_add_token(&mut token, TokenType::Operand, &mut tokens);
 
             tokens.add_ref(token_stack.pop(Some("ARRAYROW".to_string())));
@@ -451,8 +301,8 @@ fn tokenize(mut formula: &str) -> Tokens {
             continue;
         }
 
-
-        if current_char(formula, offset) == '}' {
+        // handle array formula end
+        if current_char == '}' {
             check_and_add_token(&mut token, TokenType::Operand, &mut tokens);
 
             tokens.add_ref(token_stack.pop(Some("ARRAYROW".to_string())));
@@ -462,12 +312,12 @@ fn tokenize(mut formula: &str) -> Tokens {
         }
 
         // trim whitespace
-        if current_char(formula, offset) == ' ' {
+        if current_char == ' ' {
             check_and_add_token(&mut token, TokenType::Operand, &mut tokens);
 
             tokens.add(' '.to_string(), TokenType::WhiteSpace, None);
             offset += 1;
-            while (current_char(formula, offset) == ' ' && !eof(formula, offset)) {
+            while get_current_char(formula, offset) == ' ' && !eof(formula, offset) {
                 offset += 1;
             }
             continue;
@@ -483,16 +333,16 @@ fn tokenize(mut formula: &str) -> Tokens {
         }
 
         // standard infix operators
-        if "+-*/^&=><".contains(current_char(formula, offset)) {
+        if "+-*/^&=><".contains(current_char) {
             check_and_add_token(&mut token, TokenType::Operand, &mut tokens);
 
-            tokens.add(current_char(formula, offset).to_string(), TokenType::OperatorInfix, None);
+            tokens.add(current_char.to_string(), TokenType::OperatorInfix, None);
             offset += 1;
             continue;
         }
 
         // standard postfix operators
-        if "%".contains(current_char(formula, offset)) {
+        if "%".contains(current_char) {
             check_and_add_token(&mut token, TokenType::Operand, &mut tokens);
 
             tokens.add("%".to_string(), TokenType::OperatorPostfix, None);
@@ -500,8 +350,8 @@ fn tokenize(mut formula: &str) -> Tokens {
             continue;
         }
 
-        // subexpression or function
-        if current_char(formula, offset) == '(' {
+        // subexpression or function start
+        if current_char == '(' {
             match check_and_add_token(&mut token, TokenType::Function, &mut tokens) {
                 Ok(cleaned_token) => {
                     token_stack.push(cleaned_token);
@@ -514,7 +364,8 @@ fn tokenize(mut formula: &str) -> Tokens {
             continue;
         }
 
-        if current_char(formula, offset) == ')' {
+        // subexpression or function end
+        if current_char == ')' {
             let _ = check_and_add_token(&mut token, TokenType::Operand, &mut tokens);
 
             tokens.add_ref(token_stack.pop(None));
@@ -522,7 +373,7 @@ fn tokenize(mut formula: &str) -> Tokens {
             continue;
         }
 
-        token.push(current_char(formula, offset));
+        token.push(current_char);
         offset += 1;
 
     } // EOF
@@ -672,7 +523,7 @@ fn tokenize(mut formula: &str) -> Tokens {
                 continue;
             } // end of infix operator subtypes
 
-            // MISSING CODE: convert number operands token_value to use 100,000 (default) or 100.000 based on language (LINE:624-640)
+            // MISSING CODE: convert number operands token_value to use 100,000 (default) or 100.000 based on language (LINE:624-640 of js)
             if token.token_type == TokenType::Operand && token.token_subtype.is_none() {
                 match token.token_value.parse::<i32>() {
                     Ok(number) => {
@@ -721,9 +572,9 @@ fn tokenize(mut formula: &str) -> Tokens {
 
 fn main() {
     println!("Hello, world!");
+
     let tokens = tokenize("IF(SUM(IF(FOO = BAR, 10, 0), 10 ) = 20 , \"FOO\", \"BAR\")");
     for token in tokens.items {
         println!("{:?}", token);
     }
-    
 }
