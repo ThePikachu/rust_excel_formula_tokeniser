@@ -584,44 +584,51 @@ fn tokenize(mut formula: &str) -> Tokens {
             if (tokens2.bof()) {
                 token.token_type = TokenType::OperatorPrefix;
             }
-            else if 
-                (tokens2.previous().unwrap().token_type == TokenType::Function && tokens2.previous().unwrap().token_subtype == Some(TokenSubType::Stop)) ||
-                (tokens2.previous().unwrap().token_type == TokenType::Subexpression && tokens2.previous().unwrap().token_subtype == Some(TokenSubType::Stop)) ||
-                (tokens2.previous().unwrap().token_type == TokenType::OperatorPostfix) ||
-                (tokens2.previous().unwrap().token_type == TokenType::Operand) {
-                    token.token_subtype = Some(TokenSubType::Math);
+            else if let Some(prev_token) = tokens2.previous() {
+                match prev_token {
+                    Token { token_type: TokenType::Function, token_subtype: Some(TokenSubType::Stop), .. } |
+                    Token { token_type: TokenType::Subexpression, token_subtype: Some(TokenSubType::Stop), .. } |
+                    Token { token_type: TokenType::OperatorPostfix, .. } |
+                    Token { token_type: TokenType::Operand, .. } => {
+                        token.token_subtype = Some(TokenSubType::Math);
+                    }
+                    _ => {
+                        token.token_type = TokenType::OperatorPrefix;
+                    }
                 }
-                else {
-                    token.token_type = TokenType::OperatorPrefix;
-                
-                }
-                continue;
+            }
+            continue;
         } // end of infix "-" operator to prefix
 
         if token.token_type == TokenType::OperatorInfix && token.token_value == "+" {
-           if tokens2.bof() {
-            token.token_type = TokenType::NoOp;
-           } else if 
-            (tokens2.previous().unwrap().token_type == TokenType::Function && tokens2.previous().unwrap().token_subtype == Some(TokenSubType::Stop)) ||
-            (tokens2.previous().unwrap().token_type == TokenType::Subexpression && tokens2.previous().unwrap().token_subtype == Some(TokenSubType::Stop)) ||
-            (tokens2.previous().unwrap().token_type == TokenType::OperatorPostfix) ||
-            (tokens2.previous().unwrap().token_type == TokenType::Operand) {
-                token.token_subtype = Some(TokenSubType::Math);
-            }
-            else {
+            if (tokens2.bof()) {
                 token.token_type = TokenType::NoOp;
             }
-        } // end of infix "+" operator to noop
+            else if let Some(prev_token) = tokens2.previous() {
+                match prev_token {
+                    Token { token_type: TokenType::Function, token_subtype: Some(TokenSubType::Stop), .. } |
+                    Token { token_type: TokenType::Subexpression, token_subtype: Some(TokenSubType::Stop), .. } |
+                    Token { token_type: TokenType::OperatorPostfix, .. } |
+                    Token { token_type: TokenType::Operand, .. } => {
+                        token.token_subtype = Some(TokenSubType::Math);
+                    }
+                    _ => {
+                        token.token_type = TokenType::NoOp;
+                    }
+                }
+            }
+            continue;
+        }  // end of infix "+" operator to noop
 
         if token.token_type == TokenType::OperatorInfix && token.token_subtype.is_none() {
-            if "<>=".contains(token.token_value.as_str().chars().next().unwrap()) {
-                token.token_subtype = Some(TokenSubType::Logical);
-            }
-            else if token.token_value == "&" {
-                token.token_subtype = Some(TokenSubType::Concatenate);
-            }
-            else {
-                token.token_subtype = Some(TokenSubType::Math);
+            if let Some(first_char) = token.token_value.chars().next() {
+                if "<>=".contains(first_char) {
+                    token.token_subtype = Some(TokenSubType::Logical);
+                } else if first_char == '&' {
+                    token.token_subtype = Some(TokenSubType::Concatenate);
+                } else {
+                    token.token_subtype = Some(TokenSubType::Math);
+                }
             }
             continue;
         } // end of infix operator subtypes
@@ -630,8 +637,10 @@ fn tokenize(mut formula: &str) -> Tokens {
         // 3 AM thoughts: my brain cannot process this logic and convert to rust right now, KIV if necessary, but not really important
 
         if token.token_type == TokenType::Function {
-            if token.token_value.chars().next().unwrap() == '@' {
-                token.token_value = token.token_value.chars().skip(1).collect();
+            if let Some(first_char) = token.token_value.chars().next() {
+                if first_char == '@' {
+                    token.token_value = token.token_value.chars().skip(1).collect();
+                }
             }
             continue;
         } // end of removing @ from function
