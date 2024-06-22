@@ -66,7 +66,7 @@ fn is_next_non_digit_the_range_operator(formula: &str, offset: usize) -> bool {
     false
 }
 
-fn check_and_add_token(token: &mut String, token_type: TokenType,  tokens: &mut Tokens) -> Result<Token,bool> {
+fn check_and_add_token(token: &mut String, token_type: TokenType, token_subtype: Option<TokenSubType>, tokens: &mut Tokens) -> Result<Token,bool> {
     let cleaned_token_str = NEWLINE_MATCHER.replace_all(token, "");
     let cleaned_token = cleaned_token_str.to_string();
 
@@ -74,7 +74,8 @@ fn check_and_add_token(token: &mut String, token_type: TokenType,  tokens: &mut 
     *token = String::new();
 
     if !cleaned_token.is_empty() {
-        return Ok(tokens.add(cleaned_token, token_type, None));
+        // let subtype = token_subtype.unwrap();
+        return Ok(tokens.add(cleaned_token, token_type, token_subtype));
         
     }
 
@@ -85,7 +86,7 @@ fn is_scientific_notation(token: &str) -> bool {
     SCIENTIFIC_REGEX.is_match(token)
 }
 
-fn tokenize(mut formula: &str) -> Tokens {
+pub fn tokenize(mut formula: &str) -> Tokens {
 
     // trim string, remove =
     while formula.len() > 0 {
@@ -208,7 +209,7 @@ fn tokenize(mut formula: &str) -> Tokens {
         // handle argument separator 
         // TODO:: add support for locale specific argument separators US = ',' EU = ';' if needed
         if current_char == ',' &&  ["ARRAY", "ARRAYROW"].contains(&token.as_str()) {
-           check_and_add_token(&mut token, TokenType::Operand, &mut tokens);
+           check_and_add_token(&mut token, TokenType::Operand, None, &mut tokens);
 
            if (token_stack.token_type() == TokenType::Function) {
                 tokens.add(",".to_string(), TokenType::Argument, None);
@@ -221,7 +222,7 @@ fn tokenize(mut formula: &str) -> Tokens {
         // handle horizontal array separator
         // TODO:: add support for locale specific horizontal separators US = ',' EU = '.'
         if current_char == ',' {
-            check_and_add_token(&mut token, TokenType::Operand, &mut tokens);
+            check_and_add_token(&mut token, TokenType::Operand, None, &mut tokens);
 
             if (token_stack.token_type() == TokenType::Function) {
                 tokens.add(",".to_string(), TokenType::Argument, None);
@@ -245,7 +246,7 @@ fn tokenize(mut formula: &str) -> Tokens {
         }
 
         if current_char == '"' {
-            let _ = check_and_add_token(&mut token, TokenType::Unknown, &mut tokens);
+            let _ = check_and_add_token(&mut token, TokenType::Unknown, None, &mut tokens);
 
             inString = true;
             offset += 1;
@@ -253,7 +254,7 @@ fn tokenize(mut formula: &str) -> Tokens {
         }
 
         if current_char == '\'' {
-            let _ = check_and_add_token(&mut token, TokenType::Unknown, &mut tokens);
+            let _ = check_and_add_token(&mut token, TokenType::Unknown, None, &mut tokens);
             token = "'".to_string();
             inPath = true;
             offset += 1;
@@ -268,7 +269,7 @@ fn tokenize(mut formula: &str) -> Tokens {
         }
 
         if current_char == '#' {
-            check_and_add_token(&mut token, TokenType::Unknown, &mut tokens);
+            check_and_add_token(&mut token, TokenType::Unknown, None,&mut tokens);
 
             inError = true;
             token.push(current_char);
@@ -278,7 +279,7 @@ fn tokenize(mut formula: &str) -> Tokens {
 
         // handle array formula start
         if current_char == '{' {
-            check_and_add_token(&mut token, TokenType::Unknown, &mut tokens);
+            check_and_add_token(&mut token, TokenType::Unknown, None, &mut tokens);
 
             token_stack.push(tokens.add("ARRAY".to_string(), TokenType::Function, Some(TokenSubType::Start)));
             token_stack.push(tokens.add("ARRAYROW".to_string(), TokenType::Function, Some(TokenSubType::Start)));
@@ -288,7 +289,7 @@ fn tokenize(mut formula: &str) -> Tokens {
 
         // vertical array separator
         if current_char == ';' {
-            check_and_add_token(&mut token, TokenType::Operand, &mut tokens);
+            check_and_add_token(&mut token, TokenType::Operand, None,&mut tokens);
 
             tokens.add_ref(token_stack.pop(Some("ARRAYROW".to_string())));
 
@@ -303,7 +304,7 @@ fn tokenize(mut formula: &str) -> Tokens {
 
         // handle array formula end
         if current_char == '}' {
-            check_and_add_token(&mut token, TokenType::Operand, &mut tokens);
+            check_and_add_token(&mut token, TokenType::Operand, None, &mut tokens);
 
             tokens.add_ref(token_stack.pop(Some("ARRAYROW".to_string())));
             tokens.add_ref(token_stack.pop(Some("ARRAY".to_string())));
@@ -313,7 +314,7 @@ fn tokenize(mut formula: &str) -> Tokens {
 
         // trim whitespace
         if current_char == ' ' {
-            check_and_add_token(&mut token, TokenType::Operand, &mut tokens);
+            check_and_add_token(&mut token, TokenType::Operand, None, &mut tokens);
 
             tokens.add(' '.to_string(), TokenType::WhiteSpace, None);
             offset += 1;
@@ -325,7 +326,7 @@ fn tokenize(mut formula: &str) -> Tokens {
 
         // multi character comparators
         if ["<>", "<=", ">="].contains(&double_char(formula, offset)) {
-            check_and_add_token(&mut token, TokenType::Operand, &mut tokens);
+            check_and_add_token(&mut token, TokenType::Operand, None, &mut tokens);
 
             tokens.add(double_char(formula, offset).to_string(), TokenType::OperatorInfix, Some(TokenSubType::Logical));
             offset += 2;
@@ -334,7 +335,7 @@ fn tokenize(mut formula: &str) -> Tokens {
 
         // standard infix operators
         if "+-*/^&=><".contains(current_char) {
-            check_and_add_token(&mut token, TokenType::Operand, &mut tokens);
+            check_and_add_token(&mut token, TokenType::Operand, None,&mut tokens);
 
             tokens.add(current_char.to_string(), TokenType::OperatorInfix, None);
             offset += 1;
@@ -343,7 +344,7 @@ fn tokenize(mut formula: &str) -> Tokens {
 
         // standard postfix operators
         if "%".contains(current_char) {
-            check_and_add_token(&mut token, TokenType::Operand, &mut tokens);
+            check_and_add_token(&mut token, TokenType::Operand, None,&mut tokens);
 
             tokens.add("%".to_string(), TokenType::OperatorPostfix, None);
             offset += 1;
@@ -352,7 +353,7 @@ fn tokenize(mut formula: &str) -> Tokens {
 
         // subexpression or function start
         if current_char == '(' {
-            match check_and_add_token(&mut token, TokenType::Function, &mut tokens) {
+            match check_and_add_token(&mut token, TokenType::Function, Some(TokenSubType::Start), &mut tokens) {
                 Ok(cleaned_token) => {
                     token_stack.push(cleaned_token);
                 }
@@ -366,7 +367,7 @@ fn tokenize(mut formula: &str) -> Tokens {
 
         // subexpression or function end
         if current_char == ')' {
-            let _ = check_and_add_token(&mut token, TokenType::Operand, &mut tokens);
+            let _ = check_and_add_token(&mut token, TokenType::Operand, None, &mut tokens);
 
             tokens.add_ref(token_stack.pop(None));
             offset += 1;
@@ -379,7 +380,7 @@ fn tokenize(mut formula: &str) -> Tokens {
     } // EOF
 
     // dump last token
-    let _ = check_and_add_token(&mut token, TokenType::Operand, &mut tokens);
+    let _ = check_and_add_token(&mut token, TokenType::Operand, None, &mut tokens);
 
     // IMPORTANT NOTE: 
     // THIS SECTION ONWARDS IS NOT IMPORTANT IF YOU ARE ONLY INTERESTED IN GENERAL TOKENIZATION OF TYPES (FUNCTIONS, OPERANDS, OPERATORS, ETC.)
@@ -559,14 +560,14 @@ fn tokenize(mut formula: &str) -> Tokens {
     tokens = Tokens::new();
 
     while tokens2.move_next() {
-        if tokens2.current().unwrap().token_type != TokenType::NoOp {
-            tokens.add_ref(tokens2.current().unwrap().clone());
+        let token = tokens2.current().unwrap();
+
+        if token.token_type != TokenType::NoOp {
+            tokens.add_ref(token.clone());
             continue;
         }
     }
     
-    tokens.reset();
-
     return tokens;  
 }
 
